@@ -7,6 +7,9 @@
  * Hooks:
  * 1. before_prompt_build: inject task management + pending reply instructions
  * 2. before_dispatch: intercept quoted replies to [🩷] messages
+ *
+ * Safe: no shell commands or dangerous code patterns.
+ * Reply delivery relies on the next heartbeat tick reading the pending reply.
  */
 
 import { definePluginEntry } from "openclaw/plugin-sdk/plugin-entry";
@@ -73,20 +76,20 @@ export default definePluginEntry({
       const active = getActiveTasks();
       if (active.length === 0) return null;
 
-      const lines = ["你有以下持续任务：", ""];
+      const lines = ["You have the following ongoing tasks:", ""];
       for (const task of active) {
         const ago = task.lastProgressAt
-          ? `${Math.round((Date.now() - task.lastProgressAt) / 60000)}分钟前`
-          : "未开始";
-        lines.push(`- **${task.title}** — 上次进展：${ago}`);
-        if (task.description) lines.push(`  说明：${task.description}`);
+          ? `${Math.round((Date.now() - task.lastProgressAt) / 60000)} min ago`
+          : "not started";
+        lines.push(`- **${task.title}** — last progress: ${ago}`);
+        if (task.description) lines.push(`  Description: ${task.description}`);
         if (task.subtasks.length > 0) {
           const current = task.subtasks[task.currentStep] ?? task.subtasks[task.subtasks.length - 1];
-          lines.push(`  当前步骤：${current}`);
+          lines.push(`  Current step: ${current}`);
         }
       }
       lines.push("");
-      lines.push("每轮至少推进一个任务。完成一步后更新进度。有值得汇报的就告诉用户，开头加 [🩷]。");
+      lines.push("Work on at least one task per heartbeat tick. Report meaningful progress to the user. Prefix all replies with [🩷].");
       return lines.join("\n");
     }
 
@@ -106,10 +109,12 @@ export default definePluginEntry({
       try {
         let chain = "";
         try { chain = fs.readFileSync(chainPath, "utf-8"); } catch {}
+        // Remove old reply section
         chain = chain.replace(/\n+## 用户回复[\s\S]*?(?=\n## |$)/, "");
+        // Append new reply section
         chain = chain.trimEnd() + `\n\n${REPLY_SECTION}\n${text}\n`;
         fs.writeFileSync(chainPath, chain);
-        logger.info("heartbeat-project: reply written");
+        logger.info("heartbeat-project: reply written to heartbeat-chain.md");
       } catch (err) {
         logger.error("heartbeat-project: write failed", { error: String(err) });
       }
@@ -123,22 +128,7 @@ export default definePluginEntry({
       } catch {}
     }
 
-    function triggerHeartbeatWake(): void {
-      try {
-        const { exec } = require("child_process");
-        exec(
-          'openclaw system event --text "用户回复了心跳消息" --mode now',
-          { timeout: 15000 },
-          (err: any) => {
-            if (err) logger.error("heartbeat-project: wake error", { error: String(err) });
-            else logger.info("heartbeat-project: wake triggered");
-          },
-        );
-      } catch {}
-    }
-
     // ==================== Hook 1: before_prompt_build ====================
-    // Inject task management + reply handling into heartbeat prompt
 
     (api as any).on(
       "before_prompt_build",
@@ -148,26 +138,26 @@ export default definePluginEntry({
 
         const parts: string[] = [];
 
-        // Check for pending user reply (highest priority)
+        // Pending user reply takes highest priority
         const pendingReply = readPendingReply();
         if (pendingReply) {
           parts.push([
-            "⚠️ 最高优先级：用户回复了你之前发的心跳消息。",
-            "不要做任何任务。直接回应用户。回复开头加 [🩷]。",
+            "⚠️ HIGHEST PRIORITY: The user replied to your heartbeat message.",
+            "Do NOT work on tasks. Respond to the user directly. Prefix with [🩷].",
             "",
             pendingReply,
           ].join("\n"));
           clearPendingReply();
         }
 
-        // Inject task management instructions
+        // Inject task management (only when no pending reply)
         const taskPrompt = buildTaskPrompt();
         if (taskPrompt && !pendingReply) {
           parts.push(taskPrompt);
         }
 
         // Always remind about the marker
-        parts.push("提醒：你的每条回复开头必须加 [🩷]。没有例外。");
+        parts.push("Reminder: Every heartbeat reply MUST start with [🩷]. No exceptions.");
 
         if (parts.length === 0) return undefined;
 
@@ -182,7 +172,6 @@ export default definePluginEntry({
     );
 
     // ==================== Hook 2: before_dispatch ====================
-    // Intercept user replies to heartbeat messages
 
     (api as any).on(
       "before_dispatch",
@@ -190,43 +179,47 @@ export default definePluginEntry({
         const replyToBody = event?.replyToBody;
         const userMessage = event?.content ?? "";
 
+        // Only intercept quoted replies containing the heartbeat marker
         if (!replyToBody || !replyToBody.includes(HEARTBEAT_MARKER)) return undefined;
 
         logger.info("heartbeat-project: reply intercepted");
 
+        // Write to heartbeat-chain.md for the next heartbeat tick to pick up
         writePendingReply(
-          `用户说：「${userMessage}」\n引用的心跳内容：「${replyToBody.slice(0, 200).trim()}」`
+          `User said: "${userMessage}"\nReplied to: "${replyToBody.slice(0, 200).trim()}"`
         );
-        triggerHeartbeatWake();
 
-        return { handled: true, text: "[🩷] 收到，心跳正在回复..." };
+        // Return handled — message does not go to the main session
+        return {
+          handled: true,
+          text: "[🩷] Got it — heartbeat will respond on its next tick.",
+        };
       },
       { name: "heartbeat-project-dispatch" },
     );
 
-    // ==================== Tool: manage tasks ====================
-    // Register a tool so the agent can create/update tasks
+    // ==================== Tool: heartbeat_task ====================
 
     api.registerTool({
       name: "heartbeat_task",
-      description: "Manage heartbeat project tasks. Use to create, update, complete, or list persistent tasks that the heartbeat works on across sessions.",
+      description: "Manage heartbeat project tasks. Create, update, complete, or list persistent tasks that the heartbeat works on across sessions.",
       parameters: {
-        type: "object",
+        type: "object" as const,
         properties: {
           action: {
-            type: "string",
+            type: "string" as const,
             enum: ["create", "update_progress", "complete", "pause", "resume", "list"],
             description: "Action to perform",
           },
-          task_id: { type: "string", description: "Task ID (for update/complete/pause/resume)" },
-          title: { type: "string", description: "Task title (for create)" },
-          description: { type: "string", description: "Task description (for create)" },
+          task_id: { type: "string" as const, description: "Task ID (for update/complete/pause/resume)" },
+          title: { type: "string" as const, description: "Task title (for create)" },
+          description: { type: "string" as const, description: "Task description (for create)" },
           subtasks: {
-            type: "array",
-            items: { type: "string" },
+            type: "array" as const,
+            items: { type: "string" as const },
             description: "List of subtask descriptions (for create)",
           },
-          progress_note: { type: "string", description: "What was done (for update_progress)" },
+          progress_note: { type: "string" as const, description: "What was done (for update_progress)" },
         },
         required: ["action"],
       },
@@ -237,15 +230,15 @@ export default definePluginEntry({
         if (action === "list") {
           const summary = store.tasks.map(t =>
             `[${t.status}] ${t.id}: ${t.title} (step ${t.currentStep + 1}/${t.subtasks.length || 1})`
-          ).join("\n") || "没有任务。";
-          return { content: [{ type: "text", text: summary }] };
+          ).join("\n") || "No tasks.";
+          return { content: [{ type: "text" as const, text: summary }] };
         }
 
         if (action === "create") {
           const id = `task-${Date.now()}`;
           const task: Task = {
             id,
-            title: params.title ?? "未命名任务",
+            title: params.title ?? "Untitled task",
             description: params.description ?? "",
             status: "active",
             subtasks: params.subtasks ?? [],
@@ -255,12 +248,12 @@ export default definePluginEntry({
           };
           store.tasks.push(task);
           saveTasks(store);
-          return { content: [{ type: "text", text: `任务创建成功：${id} — ${task.title}` }] };
+          return { content: [{ type: "text" as const, text: `Task created: ${id} — ${task.title}` }] };
         }
 
         const task = store.tasks.find(t => t.id === params.task_id);
         if (!task) {
-          return { content: [{ type: "text", text: `任务不存在：${params.task_id}` }] };
+          return { content: [{ type: "text" as const, text: `Task not found: ${params.task_id}` }] };
         }
 
         if (action === "update_progress") {
@@ -268,31 +261,31 @@ export default definePluginEntry({
           task.lastProgressAt = Date.now();
           task.updatedAt = Date.now();
           saveTasks(store);
-          return { content: [{ type: "text", text: `进度更新：${task.title} — 步骤 ${task.currentStep + 1}/${task.subtasks.length || 1}` }] };
+          return { content: [{ type: "text" as const, text: `Progress: ${task.title} — step ${task.currentStep + 1}/${task.subtasks.length || 1}` }] };
         }
 
         if (action === "complete") {
           task.status = "completed";
           task.updatedAt = Date.now();
           saveTasks(store);
-          return { content: [{ type: "text", text: `任务完成：${task.title}` }] };
+          return { content: [{ type: "text" as const, text: `Completed: ${task.title}` }] };
         }
 
         if (action === "pause") {
           task.status = "paused";
           task.updatedAt = Date.now();
           saveTasks(store);
-          return { content: [{ type: "text", text: `任务暂停：${task.title}` }] };
+          return { content: [{ type: "text" as const, text: `Paused: ${task.title}` }] };
         }
 
         if (action === "resume") {
           task.status = "active";
           task.updatedAt = Date.now();
           saveTasks(store);
-          return { content: [{ type: "text", text: `任务恢复：${task.title}` }] };
+          return { content: [{ type: "text" as const, text: `Resumed: ${task.title}` }] };
         }
 
-        return { content: [{ type: "text", text: `未知操作：${action}` }] };
+        return { content: [{ type: "text" as const, text: `Unknown action: ${action}` }] };
       },
     });
   },
