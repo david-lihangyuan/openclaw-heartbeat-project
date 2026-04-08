@@ -1,10 +1,27 @@
 {
   "id": "heartbeat-project",
   "name": "Heartbeat Project",
-  "description": "Turn heartbeat into a continuous project worker. Manages long-running tasks across heartbeat sessions. Reply to heartbeat messages to give feedback.",
+  "description": "Turn heartbeat into a continuous project worker. Manages long-running tasks across heartbeat sessions with reply-based feedback.",
   "configSchema": {
     "type": "object",
     "additionalProperties": false,
-    "properties": {}
+    "properties": {
+      "marker": {
+        "type": "string",
+        "description": "Heartbeat message marker for reply detection (default: [🩷])"
+      },
+      "markerOnlyForTasks": {
+        "type": "boolean",
+        "description": "Only add marker to task-related messages (default: false)"
+      },
+      "maxTasksInPrompt": {
+        "type": "number",
+        "description": "Maximum active tasks injected per heartbeat tick (default: 5)"
+      },
+      "taskCooldownMinutes": {
+        "type": "number",
+        "description": "Minutes of no progress before a task is deprioritized (default: 120)"
+      }
+    }
   }
 }

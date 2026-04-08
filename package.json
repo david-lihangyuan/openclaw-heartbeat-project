@@ -1,6 +1,6 @@
 {
   "name": "openclaw-heartbeat-project",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Turn heartbeat into a continuous project worker with reply-based feedback",
   "type": "module",
   "main": "index.ts",
