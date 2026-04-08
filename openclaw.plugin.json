@@ -1,0 +1,10 @@
+{
+  "id": "heartbeat-project",
+  "name": "Heartbeat Project",
+  "description": "Turn heartbeat into a continuous project worker. Manages long-running tasks across heartbeat sessions. Reply to heartbeat messages to give feedback.",
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {}
+  }
+}
