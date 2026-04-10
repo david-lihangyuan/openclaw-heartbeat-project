@@ -143,7 +143,7 @@ export default definePluginEntry({
     // Ensure data dir
     try { if (!fs.existsSync(dataDir)) fs.mkdirSync(dataDir, { recursive: true }); } catch {}
 
-    logger.info(`heartbeat-project v0.2.0: registered (marker=${marker}, maxTasks=${config.maxTasksInPrompt})`);
+    logger.info(`heartbeat-project v0.2.1: registered (marker=${marker}, maxTasks=${config.maxTasksInPrompt})`);
 
     // ==================== Task Management ====================
 
@@ -285,16 +285,38 @@ export default definePluginEntry({
           parts.push(`Reminder: prefix heartbeat replies with ${marker}.`);
         }
 
-        if (parts.length === 0) return undefined;
+        if (parts.length === 0) {
+          logger.info("heartbeat-project: heartbeat session detected but no content to inject");
+          return undefined;
+        }
 
         logger.info("heartbeat-project: prompt injected", {
           pendingReplies: replies.length,
           activeTasks: getActiveTasks().length,
+          sessionKey,
         });
 
         return { prependContext: parts.join("\n\n") };
       },
       { name: "heartbeat-project-prompt" },
+    );
+
+    // ==================== Hook: after_heartbeat (diagnostic logging) ======
+
+    (api as any).on(
+      "after_heartbeat",
+      async (event: any, _ctx: any) => {
+        const text = event?.text ?? "";
+        const status = event?.status ?? "unknown";
+        logger.info("heartbeat-project: heartbeat tick completed", {
+          status,
+          hasMarker: text.includes(marker),
+          textLength: text.length,
+          preview: text.slice(0, 80),
+        });
+        return undefined;
+      },
+      { name: "heartbeat-project-after" },
     );
 
     // ==================== Hook 2: before_dispatch ====================

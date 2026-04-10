@@ -2,6 +2,7 @@
   "id": "heartbeat-project",
   "name": "Heartbeat Project",
   "description": "Turn heartbeat into a continuous project worker. Manages long-running tasks across heartbeat sessions with reply-based feedback.",
+  "version": "0.2.1",
   "configSchema": {
     "type": "object",
     "additionalProperties": false,

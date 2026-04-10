@@ -30,3 +30,25 @@ Use this tool to manage persistent tasks:
 - Always prefix heartbeat messages with [🩷]
 - At least one task step per heartbeat tick
 - Only report meaningful progress, not every tick
+- 每次回复必须包含当前时间（HH:MM），避免 duplicate 检测拦截
+
+## ⚠️ 心跳配置要求
+
+插件只在心跳 session 中生效。确保你的心跳配置正确：
+
+```json
+// openclaw.json → agents.defaults.heartbeat
+{
+  "every": "30m",
+  "target": "telegram",
+  "to": "<your-chat-id>",
+  "ackMaxChars": 50000
+}
+```
+
+**常见问题：**
+
+1. **target 不要用 `last`** — `isolatedSession: true` 下 `target: last` 无法投递。用 `target: telegram` + `to: chatID`
+2. **ackMaxChars 要设大** — 默认值太小会把心跳内容当 HEARTBEAT_OK 吞掉。建议 50000
+3. **duplicate 拦截** — 如果每轮回复内容一样会被跳过。确保回复包含时间戳或变化内容
+4. **其他 Agent 的 channel 报错** — 如果有 Agent 的 Telegram token 失效导致 401 重试循环，会阻塞心跳调度。禁用出错的 Agent 或修复 token
