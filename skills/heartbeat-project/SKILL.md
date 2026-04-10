@@ -52,3 +52,16 @@ Use this tool to manage persistent tasks:
 2. **ackMaxChars 要设大** — 默认值太小会把心跳内容当 HEARTBEAT_OK 吞掉。建议 50000
 3. **duplicate 拦截** — 如果每轮回复内容一样会被跳过。确保回复包含时间戳或变化内容
 4. **其他 Agent 的 channel 报错** — 如果有 Agent 的 Telegram token 失效导致 401 重试循环，会阻塞心跳调度。禁用出错的 Agent 或修复 token
+5. **引用回复心跳消息进了主对话** — OpenClaw 2026.4.5 官方版不把 `replyToBody` 传给插件 hook，导致插件无法识别心跳回复。需要手动 patch：
+
+```bash
+FILE=$(grep -rl "replyToId: ctx.ReplyToId" /usr/local/lib/node_modules/openclaw/dist/message-hook-mappers*.js | head -1)
+if grep -q "replyToBody: ctx.ReplyToBody" "$FILE"; then
+  echo "已经 patch 过了"
+else
+  sed -i.bak 's/replyToId: ctx.ReplyToId/replyToId: ctx.ReplyToId,\n\t\treplyToBody: ctx.ReplyToBody/' "$FILE"
+  echo "Patched: $FILE — 重启 gateway: openclaw gateway restart"
+fi
+```
+
+等 PR #62966 合并后此 patch 不再需要。
